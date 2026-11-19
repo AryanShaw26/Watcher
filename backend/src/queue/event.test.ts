@@ -14,5 +14,6 @@ describe('CheckResultEvent schema',()=>{
   it('rejects unsupported version and malformed ids',()=>{
     expect(checkResultEventSchema.safeParse({...valid,schemaVersion:2}).success).toBe(false);
     expect(checkResultEventSchema.safeParse({...valid,eventId:'not-a-uuid'}).success).toBe(false);
+    expect(checkResultEventSchema.safeParse({...valid,monitorId:'not-a-uuid'}).success).toBe(false);
   });
 });
