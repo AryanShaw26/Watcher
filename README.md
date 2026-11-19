@@ -2,70 +2,154 @@
 
 > Your APIs. Always in Sight.
 
-Watcher is an API uptime and latency monitor.
+Watcher checks user-configured public HTTP(S) endpoints, records their status and latency, and displays a dashboard with recent history.
 
-## What it does
-
-- Registers and authenticates users with short-lived access tokens and rotating refresh cookies.
-- Creates private HTTP(S) monitors and runs scheduled or manual checks.
-- Stores recent check history and shows uptime, latency, and status.
-- Blocks private and reserved destinations with DNS and connect-time SSRF protection.
-
-## Tech stack
-
-React, Vite, Tailwind, TanStack Query, Axios, Express, PostgreSQL, TypeScript, undici, Zod, Pino.
-
-## Architecture
+## Version 2 architecture
 
 ```mermaid
 flowchart LR
-  U[Browser] --> V[Vercel React SPA]
-  V -->|/api rewrite| R[Render Express API]
-  R --> N[(Neon Postgres)]
-  R --> C[SSRF-safe checker]
-  C --> T[Public endpoints]
+  U[Browser] --> W[Web: React SPA]
+  W -->|/api| API
+  subgraph Roles[Same codebase, independent roles]
+    API[API]
+    SCH[Scheduler]
+    CON[Consumer]
+  end
+  SCH -->|claim due monitors| PG[(Postgres)]
+  SCH -->|per-monitor lock| R[(Redis)]
+  SCH -->|publish| K[[Kafka or Redis Streams]]
+  K --> CON
+  CON -->|idempotent result write| PG
+  CON -->|status cache| R
+  API --> PG
+  API --> R
+  API --> K
 ```
 
-## Local setup
+The scheduler claims due monitors in Postgres, obtains a Redis lock, runs an SSRF-safe check, and publishes a versioned event. The consumer validates and retries events, then writes results and updates the Redis status cache. The API reads Postgres as the source of truth and overlays cached status when available.
 
-Prerequisites: Node.js 20, Docker Desktop.
+## Start the full stack
+
+Requires Docker Desktop with Compose. From the repository root:
 
 ```powershell
-docker compose up -d db
+docker compose up --build
+```
+
+The Compose configuration defines Postgres, Redis, Kafka in KRaft mode, one-time migrations, and the API, scheduler, consumer, and web containers. The Docker CLI/daemon was unavailable during the last verification, so this full-stack command has not been runtime-verified here; see [report.md](./report.md) for the developer verification checklist. When running, stop with `Ctrl+C`; use `docker compose down` to stop without deleting database data.
+
+To delete the local database and start fresh, use `docker compose down -v`. This permanently removes the local Postgres volume.
+
+If another Postgres server is already using host port 5432, Compose can publish its database on 5433 instead. In PowerShell, set the override before starting Compose:
+
+```powershell
+$env:POSTGRES_HOST_PORT = "5433"
+docker compose up --build
+```
+
+The containers continue to use `db:5432`. If connecting to the Compose database from a host-run backend, set its `DATABASE_URL` and `DIRECT_DATABASE_URL` to use `localhost:5433`.
+
+## Run the web and API on the host
+
+For iterative development, start only the infrastructure in Docker:
+
+```powershell
+docker compose up -d db redis kafka
 Copy-Item backend\.env.example backend\.env
 Copy-Item frontend\.env.example frontend\.env
+```
+
+Then in separate terminals:
+
+```powershell
 cd backend
-npm install
+npm ci
 npm run migrate
 npm run dev
 ```
 
-In another terminal:
-
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open [http://localhost:5173](http://localhost:5173). To run roles independently, use `npm run dev:api`, `npm run dev:scheduler`, or `npm run dev:consumer` in separate backend terminals. The host-based example configuration connects to Kafka at `localhost:9092`; containers connect to `kafka:19092`.
 
-## Security
+## Roles and queue drivers
 
-- Access tokens stay in memory; refresh tokens are httpOnly cookies.
-- Refresh-token families rotate and revoke on reuse.
-- Every monitor and result query is scoped to the authenticated owner.
-- URLs are checked at creation and again at connection time to defeat DNS rebinding.
-- API routes use validation, Helmet, CORS allowlisting, body limits, and rate limits.
+`ROLES` is a comma-separated selection of `api`, `scheduler`, and `consumer`. Local Compose runs them in separate containers. A deployment with limited services can run `ROLES=api,scheduler,consumer` in one process, with less failure isolation.
+
+`QUEUE_DRIVER` selects:
+
+- `kafka`: the default local broker and recommended production path when a managed Kafka service is configured.
+- `redis-streams`: the alternate queue implementation, using Redis consumer groups.
+- `memory`: unit-test-only; the application rejects it in production.
+
+No production deployment or production queue provider is configured in this repository yet. Production must explicitly configure a managed Kafka service or select Redis Streams; local Compose and integration tests target Kafka.
+
+## Design decisions
+
+- **Kafka behind a queue interface:** decouples check execution from result storage and allows a second consumer group later. Redis Streams exercises that interface with a second real driver.
+- **SQL claim plus Redis lock:** `FOR UPDATE SKIP LOCKED` decides which monitors are due; the TTL lock prevents overlapping execution for the same monitor if a check runs long or another trigger overlaps.
+- **Redis is disposable, not authoritative:** it holds locks, shared rate limits, pipeline metadata, and a status cache. Postgres remains the source of truth, so cache loss falls back to Postgres.
+- **At-least-once delivery, effectively-once storage:** a queue can redeliver. A unique `event_id` and `ON CONFLICT DO NOTHING` prevent a duplicate result row. Events are keyed by monitor ID for partition ordering; late events enter history but cannot overwrite newer monitor status.
+- **Synchronous manual-check path:** manual checks return their new result immediately and write to Postgres/cache directly. Scheduled checks use the queue.
+- **Publish fallback:** if queue publishing fails and `QUEUE_FALLBACK_TO_DB=true`, the scheduler stores that event directly with the same idempotency key.
+
+## Failure behavior
+
+| Failure | Behavior |
+|---|---|
+| Consumer stopped | The queue retains events; lag grows. Restarting the consumer resumes processing. |
+| Redis unavailable | Status reads fall back to Postgres; lock acquisition fails open; status-cache writes are skipped; rate limiting fails open. Health and Pipeline report degraded. |
+| Kafka unavailable | Scheduled checks are stored directly when queue fallback is enabled. Publishing resumes when Kafka recovers. |
+| Result write fails | Consumer retries with exponential backoff, then publishes to the dead-letter destination. If dead-letter publishing also fails, it does not acknowledge the message. |
+| Duplicate event | The unique event ID makes the write a no-op. |
+| Older event arrives late | It is retained in history but does not replace newer monitor state. |
+
+Fail-open locking and rate limiting prioritize availability during Redis outages. Rate limiting is therefore weaker while Redis is unavailable; this is a deliberate V2 trade-off.
+
+## Configuration and security
+
+Copy [backend/.env.example](./backend/.env.example) to `backend/.env` for host development. Compose supplies service-specific variables directly. Never commit `.env` files.
+
+The API uses rotating httpOnly refresh cookies and memory-only access tokens. Monitor queries are owner-scoped. User-supplied URLs are checked at creation and connection time to reduce SSRF and DNS-rebinding risk. Private destinations are blocked by default.
+
+## Testing
+
+```powershell
+cd backend
+npm test
+```
+
+Runs unit tests with the in-memory queue and rate-limit store; it does not require Redis or Kafka. The two test commands are `npm test` (unit tests) and `npm run test:integration` (real infrastructure integration tests):
+
+```powershell
+npm run test:integration
+```
+
+Integration tests require the `watcher_test` database to exist and be migrated, plus Redis and Kafka available at the URLs in the backend environment. Create `watcher_test` once using your local Postgres administrator; never substitute a database containing data you need to keep. The preflight fails loudly when a required service is unreachable; it does not skip tests. To prepare only the test database, from `backend` in PowerShell:
+
+```powershell
+$testDbUrl = "postgres://watcher:watcher@localhost:5432/watcher_test"
+$env:DATABASE_URL = $testDbUrl
+$env:DIRECT_DATABASE_URL = $testDbUrl
+npm run migrate
+npm run test:integration
+Remove-Item Env:DATABASE_URL, Env:DIRECT_DATABASE_URL
+```
+
+Do not point these test commands at a database containing data you need to keep. The full operational acceptance scenarios (catch-up, outages, scaling scheduler instances, and browser behavior) require Docker Compose.
 
 ## Known limitations
 
-- Render free-tier sleeping pauses the in-process scheduler.
-- Rate limiting is in-memory and resets on restart.
-- V1 uses one Node.js process for API, scheduler, and checking.
-- No alerting, status pages, custom headers, or request bodies.
+- V2 is not deployed; production service URLs and managed Redis/Kafka credentials are not configured.
+- Render's free service sleeps when idle, pausing in-process roles until it wakes.
+- Running all roles in one production process removes the isolation available in local Compose.
+- Rate limiting fails open if Redis is down.
+- The V1 product limitations still apply: no alerts, incidents, custom check headers/bodies, or multi-region checks.
 
 ## Roadmap
 
-- V2: Redis and Kafka.
-- V3: alerts and analytics.
+- V3: alerting, incidents, analytics, CI, and product polish.
