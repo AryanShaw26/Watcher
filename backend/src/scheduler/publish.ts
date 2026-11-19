@@ -42,7 +42,10 @@ export async function publishOrFallback(queue:ResultQueue,event:CheckResultEvent
     }
     try {
       const stored=await persist(event);
-      if(stored.applied)await cache(event.monitorId);
+      if(stored.applied) {
+        try { await cache(event.monitorId); }
+        catch(cacheError) { logger.warn({eventId:event.eventId,monitorId:event.monitorId,cacheError},'Fallback result saved but status cache refresh failed'); }
+      }
       logger.warn({eventId:event.eventId,monitorId:event.monitorId,path:'fallback'},'Result saved directly after queue publish failure');
       return 'fallback';
     } catch(fallbackError) {

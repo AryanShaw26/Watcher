@@ -21,7 +21,7 @@ export async function runRetention(): Promise<void> {
 
 let retentionTimer: NodeJS.Timeout | undefined;
 export function startRetention(): void {
-  void runRetention();
+  void runRetention().catch((error)=>logger.error({error},'Initial retention failed'));
   retentionTimer = setInterval(() => { void runRetention(); }, 3600000);
   retentionTimer.unref();
 }

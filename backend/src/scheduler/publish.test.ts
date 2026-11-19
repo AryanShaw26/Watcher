@@ -36,6 +36,14 @@ describe('publishOrFallback',()=>{
     error.mockRestore();
   });
 
+  it('keeps the successful fallback when the status cache refresh fails',async()=>{
+    const persist=vi.fn().mockResolvedValue({inserted:true,applied:true,previousStatus:'pending'});
+    const cache=vi.fn().mockRejectedValue(new Error('Redis unavailable'));
+    await expect(publishOrFallback(queue(),event,{persist,cache,fallbackEnabled:true})).resolves.toBe('fallback');
+    expect(persist).toHaveBeenCalledOnce();
+    expect(cache).toHaveBeenCalledOnce();
+  });
+
   it('uses the publish timeout before taking the configured fallback',async()=>{
     const slowQueue=queue();
     vi.spyOn(slowQueue,'publish').mockImplementation(()=>new Promise<void>(()=>undefined));

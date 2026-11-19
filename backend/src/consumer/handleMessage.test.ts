@@ -41,6 +41,22 @@ describe('consumer message handler',()=>{
     expect((await queue.getStats()).dlqDepth).toBe(0);
   });
 
+  it('keeps processing when retry delay or best-effort cache updates fail',async()=>{
+    const queue=new MemoryQueue();
+    const record=vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue({inserted:true,applied:true,previousStatus:'pending'});
+    const publishToDlq=vi.spyOn(queue,'publishToDlq');
+    await expect(createMessageHandler(queue,{
+      record,
+      delay:async()=>{throw new Error('timer failed');},
+      cacheStatus:async()=>{throw new Error('redis failed');},
+      markProcessed:async()=>{throw new Error('redis failed');}
+    })(message(JSON.stringify(event)))).resolves.toBeUndefined();
+    expect(record).toHaveBeenCalledTimes(2);
+    expect(publishToDlq).not.toHaveBeenCalled();
+  });
+
   it('sends the final failure to DLQ after the configured attempts',async()=>{
     const queue=new MemoryQueue();
     const publishToDlq=vi.spyOn(queue,'publishToDlq');

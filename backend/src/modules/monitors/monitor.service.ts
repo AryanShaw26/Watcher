@@ -2,6 +2,7 @@ import { pool } from '../../db/pool.js';
 import { env } from '../../config/env.js';
 import { AppError } from '../../lib/errors.js';
 import { assertPublicUrl } from '../../lib/ssrf.js';
+import { deleteStatus, getStatuses } from '../../redis/statusCache.js';
 
 export type MonitorInput = {
   name: string; url: string; method: 'GET'|'HEAD'; intervalSeconds: number;
@@ -33,16 +34,30 @@ export async function createMonitor(userId: string, input: MonitorInput) {
 
 export async function listMonitors(userId: string) {
   const result = await pool.query(
-    'SELECT * FROM monitors WHERE user_id=$1 AND user_id=$1 ORDER BY created_at DESC LIMIT 10',
+    'SELECT * FROM monitors WHERE user_id=$1 ORDER BY created_at DESC LIMIT 10',
     [userId]
   );
-  return result.rows.map(mapMonitor);
+  const statuses=await getStatuses(result.rows.map((row)=>row.id));
+  return result.rows.map((row)=>{
+    const cached=statuses.get(row.id);
+    return mapMonitor(cached?{
+      ...row,current_status:cached.status,last_status_code:cached.statusCode,
+      last_response_time_ms:cached.responseTimeMs,last_checked_at:cached.lastCheckedAt,
+      last_error:cached.lastError
+    }:row);
+  });
 }
 
 export async function getMonitor(userId: string, id: string) {
   const result = await pool.query('SELECT * FROM monitors WHERE id=$1 AND user_id=$2', [id,userId]);
   if (!result.rows[0]) throw new AppError(404, 'NOT_FOUND', 'Monitor not found');
-  return mapMonitor(result.rows[0]);
+  const row=result.rows[0];
+  const cached=(await getStatuses([id])).get(id);
+  return mapMonitor(cached?{
+    ...row,current_status:cached.status,last_status_code:cached.statusCode,
+    last_response_time_ms:cached.responseTimeMs,last_checked_at:cached.lastCheckedAt,
+    last_error:cached.lastError
+  }:row);
 }
 
 export async function updateMonitor(userId: string, id: string, patch: Partial<MonitorInput & { isActive: boolean }>) {
@@ -76,4 +91,5 @@ export async function updateMonitor(userId: string, id: string, patch: Partial<M
 export async function deleteMonitor(userId: string, id: string) {
   const result = await pool.query('DELETE FROM monitors WHERE id=$1 AND user_id=$2', [id,userId]);
   if (result.rowCount === 0) throw new AppError(404, 'NOT_FOUND', 'Monitor not found');
+  await deleteStatus(id);
 }

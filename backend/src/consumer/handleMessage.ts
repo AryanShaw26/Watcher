@@ -26,6 +26,10 @@ export function createMessageHandler(queue:ResultQueue,options:RetryOptions={}) 
     }
   });
   const markProcessed=options.markProcessed??(()=>setLastProcessed(new Date().toISOString()));
+  const safelyMarkProcessed=async()=>{
+    try { await markProcessed(); }
+    catch(error) { logger.warn({error},'Could not update the pipeline timestamp'); }
+  };
   return async function handleMessage(msg:QueueMessage):Promise<void> {
     let event:ReturnType<typeof checkResultEventSchema.parse>;
     try {
@@ -43,11 +47,12 @@ export function createMessageHandler(queue:ResultQueue,options:RetryOptions={}) 
           logger.debug({eventId:event.eventId},'Duplicate event ignored');
         }
         if(result.inserted&&result.applied) {
-          await cacheStatus(event.monitorId);
+          try { await cacheStatus(event.monitorId); }
+          catch(error) { logger.warn({error,monitorId:event.monitorId},'Could not refresh the status cache'); }
         } else if(result.inserted) {
           logger.debug({eventId:event.eventId},'Out-of-order event stored without changing current status');
         }
-        await markProcessed();
+        await safelyMarkProcessed();
         logger.info({
           eventId:event.eventId,monitorId:event.monitorId,status:event.status,
           partition:msg.meta.partition,offset:msg.meta.offset,inserted:result.inserted,applied:result.applied
@@ -56,11 +61,12 @@ export function createMessageHandler(queue:ResultQueue,options:RetryOptions={}) 
       } catch(error) {
         if(error&&typeof error==='object'&&'code'in error&&error.code==='23503') {
           logger.debug({eventId:event.eventId,monitorId:event.monitorId},'Result discarded because monitor was deleted');
-          await markProcessed();
+          await safelyMarkProcessed();
           return;
         }
         if(attempt<env.CONSUMER_MAX_ATTEMPTS) {
-          await delay(env.CONSUMER_RETRY_BASE_MS*Math.pow(4,attempt-1));
+          try { await delay(env.CONSUMER_RETRY_BASE_MS*Math.pow(4,attempt-1)); }
+          catch(delayError) { logger.warn({delayError,attempt},'Retry delay failed; continuing without waiting'); }
           continue;
         }
         await queue.publishToDlq(msg,{error:error instanceof Error?error.message:'Result storage failed',attempts:attempt});
