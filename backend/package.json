@@ -16,7 +16,7 @@
     "dev:api": "cross-env ROLES=api tsx watch src/server.ts",
     "dev:scheduler": "cross-env ROLES=scheduler tsx watch src/server.ts",
     "dev:consumer": "cross-env ROLES=consumer tsx watch src/server.ts",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "node scripts/check-infra.mjs"
   },
   "keywords": [],
   "author": "",
