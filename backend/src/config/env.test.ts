@@ -24,4 +24,15 @@ describe('environment validation', () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('ROLES may contain only api, scheduler, consumer');
   });
+
+  it('warns when private targets are allowed in production', () => {
+    const result = runConfig({
+      NODE_ENV: 'production',
+      QUEUE_DRIVER: 'kafka',
+      RATE_LIMIT_STORE: 'redis',
+      ALLOW_PRIVATE_TARGETS: 'true'
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('ALLOW_PRIVATE_TARGETS=true in production');
+  });
 });
