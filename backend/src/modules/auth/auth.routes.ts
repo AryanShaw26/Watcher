@@ -1,5 +1,4 @@
 import { Router, type CookieOptions, type Request, type Response } from 'express';
-import { z } from 'zod';
 import { env } from '../../config/env.js';
 import { AppError } from '../../lib/errors.js';
 import { signAccessToken } from '../../lib/tokens.js';

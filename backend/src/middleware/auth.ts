@@ -2,11 +2,9 @@ import type { NextFunction, Request, Response } from 'express';
 import { verifyAccessToken } from '../lib/tokens.js';
 import { AppError } from '../lib/errors.js';
 
-declare global {
-  namespace Express {
-    interface Request {
-      userId?: string;
-    }
+declare module 'express-serve-static-core' {
+  interface Request {
+    userId?: string;
   }
 }
 

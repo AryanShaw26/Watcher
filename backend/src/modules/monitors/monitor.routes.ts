@@ -4,12 +4,14 @@ import { requireAuth } from '../../middleware/auth.js';
 import { validate } from '../../middleware/validate.js';
 import { manualCheckLimiter } from '../../middleware/rateLimit.js';
 import { createMonitorSchema, patchMonitorSchema, uuidParamSchema } from './monitor.schemas.js';
-import { createMonitor, deleteMonitor, getMonitor, listMonitors, updateMonitor, mapMonitor } from './monitor.service.js';
+import { createMonitor, deleteMonitor, getMonitor, listMonitors, updateMonitor } from './monitor.service.js';
 import { pool } from '../../db/pool.js';
 import { assertPublicUrl } from '../../lib/ssrf.js';
 import { runCheck } from '../../checker/runCheck.js';
 import { mapResult, recordResult } from '../results/result.service.js';
 import { AppError } from '../../lib/errors.js';
+import { buildEvent } from '../../queue/event.js';
+import { setStatusFromRow } from '../../redis/statusCache.js';
 
 export const monitorRouter = Router();
 monitorRouter.use(requireAuth);
@@ -83,7 +85,14 @@ monitorRouter.post('/:id/check', manualCheckLimiter, validate({ params: uuidPara
       url: owned.rows[0].url, method: owned.rows[0].method,
       expectedStatusCode: owned.rows[0].expected_status_code, timeoutMs: owned.rows[0].timeout_ms
     });
-    const recorded = await recordResult({ id: owned.rows[0].id }, outcome);
-    res.json({ result: mapResult(recorded.result), monitor: mapMonitor(recorded.monitor) });
+    const event=buildEvent({id:owned.rows[0].id},outcome,'manual');
+    const recorded=await recordResult(event);
+    if(recorded.applied) {
+      const updated=await pool.query('SELECT * FROM monitors WHERE id=$1',[owned.rows[0].id]);
+      if(updated.rows[0])await setStatusFromRow(updated.rows[0]);
+    }
+    const result=await pool.query('SELECT * FROM check_results WHERE event_id=$1',[event.eventId]);
+    const updatedMonitor=await getMonitor(req.userId!,String(req.params.id));
+    res.json({result:mapResult(result.rows[0]),monitor:updatedMonitor});
   } catch (error) { next(error); }
 });
