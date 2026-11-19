@@ -11,9 +11,7 @@ describe('Redis lock fail-open behaviour', () => {
   it('returns a token and logs a warning when Redis is unavailable', async () => {
     const redisError = new Error('ECONNREFUSED');
 
-    const redisSetSpy = vi
-      .spyOn(redis, 'set')
-      .mockRejectedValue(redisError);
+    const redisSetSpy = vi.spyOn(redis, 'set').mockRejectedValue(redisError);
 
     const loggerSpy = vi.spyOn(logger, 'warn');
 
@@ -24,7 +22,7 @@ describe('Redis lock fail-open behaviour', () => {
 
     // A valid UUID token should still be returned.
     expect(result?.token).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
 
     // Redis SET should have been attempted.
@@ -33,7 +31,7 @@ describe('Redis lock fail-open behaviour', () => {
     // A warning should have been logged.
     expect(loggerSpy).toHaveBeenCalledWith(
       { error: redisError },
-      'Redis lock unavailable; proceeding without lock'
+      'Redis lock unavailable; proceeding without lock',
     );
   });
 });

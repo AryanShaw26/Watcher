@@ -657,3 +657,10 @@ frontend/src/
 - [ ] 360px width: no horizontal page scroll.
 - [ ] No colors outside the palette (search the code for hex values that are not in `tokens.css`).
 - [ ] Copy matches section 10 (sentence case, same verb in button and toast).
+
+## 15. V3 additions
+
+- **Pills:** notification and incident states reuse existing pill variants with text labels: sent uses the Up style, failed uses the Down style, pending and sending use the Paused (orange) style, and suppressed uses the Pending (grey) style. Incident `Open` uses the Down style and `Resolved` uses the Up style.
+- **Uptime bar:** each segment is 6px wide and 28px tall with a 3px radius and 2px gap. Use `sun-500` when `failed = 0`, `blood-400` when `failed > 0`, and `ink-600` when there is no data. A flat container with the clay well treatment holds the bar; focus rings follow the global rule.
+- **Navigation links:** 44px tall hit area, `cream-300`, hover `cream-100`, and current page `cream-100` with a 3px `sun-500` underline with a rounded end.
+- **Copy-to-clipboard button:** secondary icon button; its label changes to “Copied” for two seconds and is announced with `aria-live="polite"`.

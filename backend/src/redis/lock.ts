@@ -9,18 +9,21 @@ else
   return 0
 end`;
 
-export async function acquireLock(key: string, ttlMs: number): Promise<{token:string}|null> {
+export async function acquireLock(key: string, ttlMs: number): Promise<{ token: string } | null> {
   const token = crypto.randomUUID();
   try {
     const result = await redis.set(key, token, 'PX', ttlMs, 'NX');
-    return result === 'OK' ? {token} : null;
+    return result === 'OK' ? { token } : null;
   } catch (error) {
-    logger.warn({error}, 'Redis lock unavailable; proceeding without lock');
-    return {token};
+    logger.warn({ error }, 'Redis lock unavailable; proceeding without lock');
+    return { token };
   }
 }
 
 export async function releaseLock(key: string, token: string): Promise<void> {
-  try { await redis.eval(releaseScript, 1, key, token); }
-  catch (error) { logger.warn({error}, 'Could not release Redis lock'); }
+  try {
+    await redis.eval(releaseScript, 1, key, token);
+  } catch (error) {
+    logger.warn({ error }, 'Could not release Redis lock');
+  }
 }

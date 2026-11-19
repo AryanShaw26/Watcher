@@ -51,12 +51,25 @@ services:
       NODE_ENV: development
       DATABASE_URL: postgres://watcher:watcher@db:5432/watcher
       JWT_ACCESS_SECRET: local-dev-secret-change-me-at-least-32-characters-long
+      ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      APP_PUBLIC_URL: http://localhost:3000
       REDIS_URL: redis://redis:6379
       QUEUE_DRIVER: kafka
       KAFKA_BROKERS: kafka:19092
       KAFKA_AUTO_CREATE_TOPICS: "true"
       CORS_ORIGINS: http://localhost:3000
       TRUST_PROXY: "1"
+      NOTIFIER_TICK_SECONDS: "5"
+      NOTIFY_BATCH_SIZE: "20"
+      NOTIFY_MAX_ATTEMPTS: "5"
+      NOTIFY_BACKOFF_SECONDS: 30,120,600,1800
+      NOTIFY_TIMEOUT_MS: "10000"
+      ALERT_COOLDOWN_SECONDS: "600"
+      NOTIFY_MAX_PER_CHANNEL_PER_HOUR: "20"
+      MAX_CHANNELS_PER_USER: "5"
+      RESULT_RETENTION_DAYS: "8"
+      NOTIFICATION_RETENTION_DAYS: "30"
+      INCIDENT_RETENTION_DAYS: "90"
     depends_on:
       db: { condition: service_healthy }
 
@@ -93,6 +106,16 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       kafka: { condition: service_healthy }
+
+  notifier:
+    build: ./backend
+    command: ["node", "dist/server.js"]
+    environment:
+      <<: *app-env
+      ROLES: notifier
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
 
   web:
     build: ./frontend

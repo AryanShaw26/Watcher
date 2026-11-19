@@ -6,77 +6,119 @@ import type { QueueMessage, ResultQueue } from '../queue/types.js';
 import { recordResult } from '../modules/results/result.service.js';
 import { setLastProcessed, setStatusFromRow } from '../redis/statusCache.js';
 
-type RetryOptions={
-  delay?:(milliseconds:number)=>Promise<void>;
-  record?:(event:ReturnType<typeof checkResultEventSchema.parse>)=>Promise<{inserted:boolean;applied:boolean;previousStatus:'pending'|'up'|'down'|null}>;
-  cacheStatus?:(monitorId:string)=>Promise<void>;
-  markProcessed?:()=>Promise<void>;
+type RetryOptions = {
+  delay?: (milliseconds: number) => Promise<void>;
+  record?: (event: ReturnType<typeof checkResultEventSchema.parse>) => Promise<{
+    inserted: boolean;
+    applied: boolean;
+    previousStatus: 'pending' | 'up' | 'down' | null;
+  }>;
+  cacheStatus?: (monitorId: string) => Promise<void>;
+  markProcessed?: () => Promise<void>;
 };
-const defaultDelay=(milliseconds:number)=>new Promise<void>((resolve)=>setTimeout(resolve,milliseconds));
+const defaultDelay = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
-export function createMessageHandler(queue:ResultQueue,options:RetryOptions={}) {
-  const delay=options.delay??defaultDelay;
-  const store=options.record??recordResult;
-  const cacheStatus=options.cacheStatus??(async(monitorId:string)=>{
+export function createMessageHandler(queue: ResultQueue, options: RetryOptions = {}) {
+  const delay = options.delay ?? defaultDelay;
+  const store = options.record ?? recordResult;
+  const cacheStatus =
+    options.cacheStatus ??
+    (async (monitorId: string) => {
+      try {
+        const monitor = await pool.query('SELECT * FROM monitors WHERE id=$1', [monitorId]);
+        if (monitor.rows[0]) await setStatusFromRow(monitor.rows[0]);
+      } catch (error) {
+        logger.warn({ error, monitorId }, 'Could not refresh the status cache');
+      }
+    });
+  const markProcessed = options.markProcessed ?? (() => setLastProcessed(new Date().toISOString()));
+  const safelyMarkProcessed = async () => {
     try {
-      const monitor=await pool.query('SELECT * FROM monitors WHERE id=$1',[monitorId]);
-      if(monitor.rows[0])await setStatusFromRow(monitor.rows[0]);
-    } catch(error) {
-      logger.warn({error,monitorId},'Could not refresh the status cache');
+      await markProcessed();
+    } catch (error) {
+      logger.warn({ error }, 'Could not update the pipeline timestamp');
     }
-  });
-  const markProcessed=options.markProcessed??(()=>setLastProcessed(new Date().toISOString()));
-  const safelyMarkProcessed=async()=>{
-    try { await markProcessed(); }
-    catch(error) { logger.warn({error},'Could not update the pipeline timestamp'); }
   };
-  return async function handleMessage(msg:QueueMessage):Promise<void> {
-    let event:ReturnType<typeof checkResultEventSchema.parse>;
+  return async function handleMessage(msg: QueueMessage): Promise<void> {
+    let event: ReturnType<typeof checkResultEventSchema.parse>;
     try {
-      event=checkResultEventSchema.parse(JSON.parse(msg.value));
-    } catch(error) {
-      await queue.publishToDlq(msg,{error:error instanceof Error?error.message:'Invalid event',attempts:0});
-      logger.warn({topic:msg.meta.topic,offset:msg.meta.offset},'Poison message sent to DLQ');
+      event = checkResultEventSchema.parse(JSON.parse(msg.value));
+    } catch (error) {
+      await queue.publishToDlq(msg, {
+        error: error instanceof Error ? error.message : 'Invalid event',
+        attempts: 0,
+      });
+      logger.warn({ topic: msg.meta.topic, offset: msg.meta.offset }, 'Poison message sent to DLQ');
       return;
     }
 
-    for(let attempt=1;attempt<=env.CONSUMER_MAX_ATTEMPTS;attempt++) {
+    for (let attempt = 1; attempt <= env.CONSUMER_MAX_ATTEMPTS; attempt++) {
       try {
-        const result=await store(event);
-        if(!result.inserted) {
-          logger.debug({eventId:event.eventId},'Duplicate event ignored');
+        const result = await store(event);
+        if (!result.inserted) {
+          logger.debug({ eventId: event.eventId }, 'Duplicate event ignored');
         }
-        if(result.inserted&&result.applied) {
-          try { await cacheStatus(event.monitorId); }
-          catch(error) { logger.warn({error,monitorId:event.monitorId},'Could not refresh the status cache'); }
-        } else if(result.inserted) {
-          logger.debug({eventId:event.eventId},'Out-of-order event stored without changing current status');
+        if (result.inserted && result.applied) {
+          try {
+            await cacheStatus(event.monitorId);
+          } catch (error) {
+            logger.warn(
+              { error, monitorId: event.monitorId },
+              'Could not refresh the status cache',
+            );
+          }
+        } else if (result.inserted) {
+          logger.debug(
+            { eventId: event.eventId },
+            'Out-of-order event stored without changing current status',
+          );
         }
         await safelyMarkProcessed();
-        logger.info({
-          eventId:event.eventId,monitorId:event.monitorId,status:event.status,
-          partition:msg.meta.partition,offset:msg.meta.offset,inserted:result.inserted,applied:result.applied
-        },'consumed');
+        logger.info(
+          {
+            eventId: event.eventId,
+            monitorId: event.monitorId,
+            status: event.status,
+            partition: msg.meta.partition,
+            offset: msg.meta.offset,
+            inserted: result.inserted,
+            applied: result.applied,
+          },
+          'consumed',
+        );
         return;
-      } catch(error) {
-        if(error&&typeof error==='object'&&'code'in error&&error.code==='23503') {
-          logger.debug({eventId:event.eventId,monitorId:event.monitorId},'Result discarded because monitor was deleted');
+      } catch (error) {
+        if (error && typeof error === 'object' && 'code' in error && error.code === '23503') {
+          logger.debug(
+            { eventId: event.eventId, monitorId: event.monitorId },
+            'Result discarded because monitor was deleted',
+          );
           await safelyMarkProcessed();
           return;
         }
-        if(attempt<env.CONSUMER_MAX_ATTEMPTS) {
-          try { await delay(env.CONSUMER_RETRY_BASE_MS*Math.pow(4,attempt-1)); }
-          catch(delayError) { logger.warn({delayError,attempt},'Retry delay failed; continuing without waiting'); }
+        if (attempt < env.CONSUMER_MAX_ATTEMPTS) {
+          try {
+            await delay(env.CONSUMER_RETRY_BASE_MS * Math.pow(4, attempt - 1));
+          } catch (delayError) {
+            logger.warn({ delayError, attempt }, 'Retry delay failed; continuing without waiting');
+          }
           continue;
         }
-        await queue.publishToDlq(msg,{error:error instanceof Error?error.message:'Result storage failed',attempts:attempt});
-        logger.error({eventId:event.eventId,attempts:attempt,error},'Result sent to DLQ after retries');
+        await queue.publishToDlq(msg, {
+          error: error instanceof Error ? error.message : 'Result storage failed',
+          attempts: attempt,
+        });
+        logger.error(
+          { eventId: event.eventId, attempts: attempt, error },
+          'Result sent to DLQ after retries',
+        );
         return;
       }
     }
   };
 }
 
-export async function handleMessage(queue:ResultQueue,msg:QueueMessage):Promise<void> {
+export async function handleMessage(queue: ResultQueue, msg: QueueMessage): Promise<void> {
   return createMessageHandler(queue)(msg);
 }

@@ -10,7 +10,7 @@ const queue: ResultQueue = {
   consume: async () => undefined,
   publishToDlq: async () => undefined,
   getStats: async () => ({ connected: true, lag: 0, dlqDepth: 0 }),
-  close: async () => undefined
+  close: async () => undefined,
 };
 const email = `auth-${crypto.randomUUID()}@example.invalid`;
 const password = 'valid-password-for-tests';
@@ -26,11 +26,12 @@ describe('authentication API', () => {
     const registration = await api.post('/api/auth/register').send({ email, password }).expect(201);
     expect(registration.body.user.email).toBe(email);
     expect(registration.body.accessToken).toEqual(expect.any(String));
-    expect(registration.headers['set-cookie']).toEqual(expect.arrayContaining([
-      expect.stringContaining('watcher_rt=')
-    ]));
+    expect(registration.headers['set-cookie']).toEqual(
+      expect.arrayContaining([expect.stringContaining('watcher_rt=')]),
+    );
 
-    await api.get('/api/auth/me')
+    await api
+      .get('/api/auth/me')
       .set('Authorization', `Bearer ${registration.body.accessToken}`)
       .expect(200);
 
@@ -43,7 +44,8 @@ describe('authentication API', () => {
   });
 
   it('rejects invalid credentials', async () => {
-    await api.post('/api/auth/login')
+    await api
+      .post('/api/auth/login')
       .send({ email, password: 'wrong-password-for-tests' })
       .expect(401);
   });

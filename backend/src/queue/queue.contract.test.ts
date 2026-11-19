@@ -11,7 +11,7 @@ const event: CheckResultEvent = {
   statusCode: 200,
   responseTimeMs: 1,
   error: null,
-  source: 'scheduler'
+  source: 'scheduler',
 };
 
 let queue: MemoryQueue | undefined;
@@ -24,7 +24,9 @@ describe('memory queue contract', () => {
   it('delivers published events to the consumer', async () => {
     queue = new MemoryQueue();
     const received: string[] = [];
-    await queue.consume(async (message) => { received.push(message.value); });
+    await queue.consume(async (message) => {
+      received.push(message.value);
+    });
     await queue.publish(event);
     await queue.drain();
     expect(JSON.parse(received[0])).toMatchObject({ eventId: event.eventId });
@@ -44,7 +46,7 @@ describe('memory queue contract', () => {
     queue = new MemoryQueue();
     await queue.publishToDlq(
       { key: event.monitorId, value: JSON.stringify(event), meta: { topic: 'check.results' } },
-      { error: 'invalid event', attempts: 0 }
+      { error: 'invalid event', attempts: 0 },
     );
     expect((await queue.getStats()).dlqDepth).toBe(1);
   });

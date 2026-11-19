@@ -7,17 +7,22 @@ export const redis = new Redis(env.REDIS_URL, {
   maxRetriesPerRequest: 2,
   enableOfflineQueue: false,
   connectTimeout: 5000,
-  retryStrategy(attempt:number) {
+  retryStrategy(attempt: number) {
     return Math.min(attempt * 250, 5000);
-  }
+  },
 });
 
-redis.on('error', (error:Error) => logger.warn({ error: error.message }, 'Redis connection error'));
+redis.on('error', (error: Error) =>
+  logger.warn({ error: error.message }, 'Redis connection error'),
+);
 redis.on('connect', () => logger.info('Redis connected'));
 
 export async function redisIsUp(): Promise<boolean> {
-  try { return (await redis.ping()) === 'PONG'; }
-  catch { return false; }
+  try {
+    return (await redis.ping()) === 'PONG';
+  } catch {
+    return false;
+  }
 }
 
 export async function closeRedis(): Promise<void> {

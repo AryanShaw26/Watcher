@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 export const pool = new pg.Pool({
   connectionString: env.DATABASE_URL,
   max: env.DB_POOL_MAX,
-  ssl: env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined
+  ssl: env.DATABASE_URL.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined,
 });
 
 export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {

@@ -14,11 +14,7 @@ const monitorId = crypto.randomUUID();
 const email = `v2-test-${userId}@example.invalid`;
 const at = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
 
-const event = (
-  eventId: string,
-  checkedAt: string,
-  status: 'up' | 'down'
-): CheckResultEvent => ({
+const event = (eventId: string, checkedAt: string, status: 'up' | 'down'): CheckResultEvent => ({
   schemaVersion: 1,
   eventId,
   monitorId,
@@ -27,7 +23,7 @@ const event = (
   statusCode: status === 'up' ? 200 : 503,
   responseTimeMs: 20,
   error: status === 'up' ? null : 'Expected 200, got 503',
-  source: 'scheduler'
+  source: 'scheduler',
 });
 
 const queue: ResultQueue = {
@@ -35,20 +31,21 @@ const queue: ResultQueue = {
   consume: async () => undefined,
   publishToDlq: async () => undefined,
   getStats: async () => ({ connected: true, lag: 0, dlqDepth: 0 }),
-  close: async () => undefined
+  close: async () => undefined,
 };
 
 beforeAll(async () => {
-  await pool.query(
-    'INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)',
-    [userId, email, 'test-hash']
-  );
+  await pool.query('INSERT INTO users (id, email, password_hash) VALUES ($1, $2, $3)', [
+    userId,
+    email,
+    'test-hash',
+  ]);
 
   await pool.query(
     `INSERT INTO monitors
        (id, user_id, name, url, method, interval_seconds, expected_status_code, timeout_ms)
      VALUES ($1, $2, 'Integration monitor', 'https://example.com', 'GET', 60, 200, 10000)`,
-    [monitorId, userId]
+    [monitorId, userId],
   );
 });
 
@@ -62,33 +59,40 @@ describe('recordResult integration', () => {
     const newest = event(crypto.randomUUID(), at(10), 'down');
     const first = await recordResult(newest);
 
-    expect(first).toEqual({ inserted: true, applied: true, previousStatus: 'pending' });
+    expect(first).toEqual({
+      inserted: true,
+      applied: true,
+      previousStatus: 'pending',
+      incident: null,
+    });
     expect(await recordResult(newest)).toEqual({
       inserted: false,
       applied: false,
-      previousStatus: null
+      previousStatus: null,
+      incident: null,
     });
 
     const older = event(crypto.randomUUID(), at(5), 'up');
     expect(await recordResult(older)).toEqual({
       inserted: true,
       applied: false,
-      previousStatus: 'down'
+      previousStatus: 'down',
+      incident: null,
     });
 
     const rows = await pool.query(
       'SELECT count(*)::int AS count FROM check_results WHERE monitor_id = $1',
-      [monitorId]
+      [monitorId],
     );
     const monitor = await pool.query(
       'SELECT current_status, consecutive_failures FROM monitors WHERE id = $1',
-      [monitorId]
+      [monitorId],
     );
 
     expect(rows.rows[0].count).toBe(2);
     expect(monitor.rows[0]).toMatchObject({
       current_status: 'down',
-      consecutive_failures: 1
+      consecutive_failures: 1,
     });
   });
 
@@ -99,7 +103,7 @@ describe('recordResult integration', () => {
       responseTimeMs: 7,
       lastCheckedAt: at(0),
       lastError: null,
-      consecutiveFailures: 0
+      consecutiveFailures: 0,
     });
 
     const response = await request(buildApp(queue))
@@ -108,11 +112,11 @@ describe('recordResult integration', () => {
       .expect(200);
 
     expect(
-      response.body.monitors.find((monitor: { id: string }) => monitor.id === monitorId)
+      response.body.monitors.find((monitor: { id: string }) => monitor.id === monitorId),
     ).toMatchObject({
       currentStatus: 'up',
       lastStatusCode: 204,
-      lastResponseTimeMs: 7
+      lastResponseTimeMs: 7,
     });
 
     await deleteStatus(monitorId);

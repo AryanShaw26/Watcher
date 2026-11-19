@@ -9,7 +9,7 @@ export default tseslint.config(
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
-      globals: globals.browser
-    }
-  }
+      globals: globals.browser,
+    },
+  },
 );

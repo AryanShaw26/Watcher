@@ -7,9 +7,9 @@ describe('Redis status cache outage', () => {
     redis.disconnect();
 
     try {
-      await expect(
-        getStatuses(['6f1c2c1e-6f1d-4e0a-9d0b-2f2c5a0e9a12'])
-      ).resolves.toEqual(new Map());
+      await expect(getStatuses(['6f1c2c1e-6f1d-4e0a-9d0b-2f2c5a0e9a12'])).resolves.toEqual(
+        new Map(),
+      );
     } finally {
       // Restore the shared Redis connection for subsequent tests.
       if (redis.status === 'end') {

@@ -9,17 +9,20 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        caughtErrorsIgnorePattern: '^_'
-      }]
-    }
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+    },
   },
   {
     files: ['**/*.ts'],
     languageOptions: {
-      globals: globals.node
-    }
+      globals: globals.node,
+    },
   },
-  eslintConfigPrettier
+  eslintConfigPrettier,
 );

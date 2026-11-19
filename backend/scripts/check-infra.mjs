@@ -33,10 +33,12 @@ const checks = await Promise.all([
       lazyConnect: true,
       connectTimeout: 2000,
       maxRetriesPerRequest: 0,
-      enableOfflineQueue: false
+      enableOfflineQueue: false,
     });
     let connectionError;
-    redis.on('error', (error) => { connectionError = error; });
+    redis.on('error', (error) => {
+      connectionError = error;
+    });
     try {
       await redis.connect();
       await redis.ping();
@@ -50,14 +52,16 @@ const checks = await Promise.all([
     }
   })(),
   (async () => {
-    const brokers = (process.env.KAFKA_BROKERS || 'localhost:9092').split(',').map((broker) => broker.trim());
+    const brokers = (process.env.KAFKA_BROKERS || 'localhost:9092')
+      .split(',')
+      .map((broker) => broker.trim());
     const kafka = new Kafka({
       clientId: 'watcher-integration-preflight',
       brokers,
       logLevel: logLevel.NOTHING,
       connectionTimeout: 2000,
       requestTimeout: 3000,
-      retry: { retries: 0 }
+      retry: { retries: 0 },
     });
     const admin = kafka.admin();
     try {
@@ -71,7 +75,7 @@ const checks = await Promise.all([
     } finally {
       await admin.disconnect().catch(() => {});
     }
-  })()
+  })(),
 ]);
 
 if (checks.some((reachable) => !reachable)) {
@@ -84,8 +88,21 @@ const child = spawnSync(
   ['node_modules/vitest/vitest.mjs', 'run', '--config', 'vitest.integration.config.ts'],
   {
     stdio: 'inherit',
-    env: { ...process.env, DATABASE_URL: databaseUrl, DIRECT_DATABASE_URL: databaseUrl }
-  }
+    env: {
+      ...process.env,
+      DATABASE_URL: databaseUrl,
+      DIRECT_DATABASE_URL: databaseUrl,
+      ENCRYPTION_KEY: process.env.ENCRYPTION_KEY || 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=',
+      NODE_ENV: 'test',
+      JWT_ACCESS_SECRET: 'test-secret-that-is-at-least-32-characters',
+      BCRYPT_COST: '4',
+      RATE_LIMIT_STORE: 'memory',
+      QUEUE_DRIVER: 'memory',
+      RESULT_RETENTION_DAYS: '8',
+      NOTIFICATION_RETENTION_DAYS: '30',
+      INCIDENT_RETENTION_DAYS: '90',
+    },
+  },
 );
 if (child.error) {
   console.error(`Could not start integration tests: ${child.error.message}`);
