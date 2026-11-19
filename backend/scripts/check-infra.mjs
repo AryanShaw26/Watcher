@@ -35,13 +35,15 @@ const checks = await Promise.all([
       maxRetriesPerRequest: 0,
       enableOfflineQueue: false
     });
+    let connectionError;
+    redis.on('error', (error) => { connectionError = error; });
     try {
       await redis.connect();
       await redis.ping();
       console.info('Redis: reachable');
       return true;
     } catch (error) {
-      console.error(`Redis unavailable: ${error.message}`);
+      console.error(`Redis unavailable: ${connectionError?.code || error.code || error.message}`);
       return false;
     } finally {
       redis.disconnect();
